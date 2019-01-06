@@ -1,89 +1,74 @@
-'use strict';
-const
-    cluster = require('cluster'),
-    zmq = require('zmq'),
+"use strict";
 
-    clusterCount = 3,
-    externalEndpoint = 'tcp://127.0.0.1:5433',
-    workerEndpoint = 'ipc://filer-dealer.ipc',
-    workerEndpoint2 = 'ipc://filer-dealer-2.ipc',
-    workerEndpoint3 = 'ipc://filer-dealer-3.ipc';
-let jobCounter = 1;
+const zmq = require('zmq'),
+    routerEndPoint = 'tcp://127.0.0.1:3000',
+    dealerEndPoint = 'ipc://dealer.ipc',
+    dealerEndPoint2 = 'ipc://dealer2.ipc',
+    dealerEndPoint3 = 'ipc://dealer3.ipc';
 
-if (cluster.isMaster) {
-    let router = zmq.socket('router').bind(externalEndpoint);
-    let dealer = zmq.socket('dealer').bind(workerEndpoint);
-    let dealer2 = zmq.socket('dealer').bind(workerEndpoint2);
-    let dealer3 = zmq.socket('dealer').bind(workerEndpoint3);
-    router.on('message', function() {
-        let frames = Array.prototype.slice.call(arguments);
-        console.log(jobCounter);
-        switch (jobCounter) {
-            case 1:
-                dealer.send(frames);
-                break;
-            case 2:
-                dealer2.send(frames);
-                break;
-            case 3:
-                dealer3.send(frames);
-                break;
+let router = zmq.socket("router").bind(routerEndPoint);
+
+let dealers = ["service1", "service2", "service3"];
+dealers["service1"] = zmq.socket("dealer").bind(dealerEndPoint);
+dealers["service2"] = zmq.socket("dealer").bind(dealerEndPoint2);
+dealers["service3"] = zmq.socket("dealer").bind(dealerEndPoint3);
+
+let responders = ["service1", "service2", "service3"];
+responders["service1"] = zmq.socket("rep").connect(dealerEndPoint);
+responders["service2"] = zmq.socket("rep").connect(dealerEndPoint2);
+responders["service3"] = zmq.socket("rep").connect(dealerEndPoint3);
+
+
+function formatBuffer(buffer) {
+    for (var i = 0; i < buffer.length; i++) {
+        if (buffer[i] < 32 || buffer[i] > 127) {
+            return buffer.toString("hex")
         }
-    });
-    dealer.on('message', function() {
-        let frames = Array.prototype.slice.call(arguments);
-        router.send(frames);
-    });
-    dealer2.on('message', function() {
-        let frames = Array.prototype.slice.call(arguments);
-        router.send(frames);
-    });
-    dealer3.on('message', function() {
-        let frames = Array.prototype.slice.call(arguments);
-        router.send(frames);
-    });
-    cluster.on('online', function(worker) {
-        console.log('Worker ' + worker.process.pid + ' is online.');
-    });
-    for (let i = 0; i < clusterCount; i++) {
-        cluster.fork();
     }
-    jobCounter += 1;
-    jobCounter %= 3;
-} else {
-    let tempZMQ = zmq.socket('rep');
-    let responder = tempZMQ.connect(workerEndpoint);
-    let responder2 = tempZMQ.connect(workerEndpoint2);
-    let responder3 = tempZMQ.connect(workerEndpoint3);
-
-    responder.on('message', function(data) {
-        let request = JSON.parse(data);
-        console.log(process.pid + ' received request from: ' + request.service);
-        responder.send(JSON.stringify({
-            service: process.pid,
-            message: "REP 1 : " + Date.now()
-        }));
-
-    });
-
-    responder2.on('message', function(data) {
-        let request = JSON.parse(data);
-        console.log(process.pid + ' received request from: ' + request.service);
-        responder.send(JSON.stringify({
-            service: process.pid,
-            message: "REP 2 : " + Date.now()
-        }));
-
-    });
-
-    responder3.on('message', function(data) {
-        let request = JSON.parse(data);
-        console.log(process.pid + ' received request from: ' + request.service);
-        responder.send(JSON.stringify({
-            service: process.pid,
-            message: "REP 3 : " + Date.now()
-        }));
-
-    });
-
+    return buffer.toString("utf8");
 }
+
+router.on('message', function(){
+    let frames = Array.prototype.slice.call(arguments);
+    let messageRequest = JSON.parse(formatBuffer(frames[2]));
+    dealers[messageRequest.service].send(frames);
+});
+
+dealers["service1"].on('message', function() {
+    let frames = Array.prototype.slice.call(arguments);
+    router.send(frames);
+});
+
+dealers["service2"].on('message', function() {
+    let frames = Array.prototype.slice.call(arguments);
+    router.send(frames);
+});
+
+dealers["service3"].on('message', function() {
+    let frames = Array.prototype.slice.call(arguments);
+    router.send(frames);
+});
+
+responders["service1"].on('message', function(data) {
+    let request = JSON.parse(data);
+    responders["service1"].send(JSON.stringify({
+        pid: "Service 1 (" + process.pid + ")",
+        timestamp: Date.now()
+    }));
+});
+
+responders["service2"].on('message', function(data) {
+    let request = JSON.parse(data);
+    responders["service2"].send(JSON.stringify({
+        pid: "Service 2 (" + process.pid+ ")",
+        timestamp: Date.now()
+    }));
+});
+
+responders["service3"].on('message', function(data) {
+    let request = JSON.parse(data);
+    responders["service3"].send(JSON.stringify({
+        pid: "Service 3 (" + process.pid+ ")",
+        timestamp: Date.now()
+    }));
+});
